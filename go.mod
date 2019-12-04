@@ -1,6 +1,8 @@
 module github.com/marguerite/rankmirror-ng
 
 require (
+	github.com/alexkohler/nakedret v1.0.0 // indirect
+	github.com/opennota/check v0.0.0-20180911053232-0c771f5545ff // indirect
 	github.com/tatsushid/go-fastping v0.0.0-20160109021039-d7bb493dee3e
 	golang.org/x/crypto v0.0.0-20191202143827-86a70503ff7e // indirect
 	golang.org/x/net v0.0.0-20191204025024-5ee1b9f4859a // indirect

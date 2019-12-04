@@ -16,13 +16,17 @@ import (
 type MirrorList []Mirror
 
 type Mirror struct {
-	Name        string
-	Raw         string
-	URI         *url.URL
-	Distro      string
-	Version     string
-	GeoLocation string
-	IPv6        bool
+	Name             string `yaml:"name"`
+	Raw              string `yaml:"raw"`
+	URI              *url.URL
+	Distro           string        `yaml: "distro"`
+	Version          []string      `yaml: "version"`
+	GeoLocation      string        `yaml: "geo"`
+	PhysicalDistance string        `yaml: "physical-distance"`
+	RouteLength      string        `yaml: "route-length"`
+	PingSpeed        time.Duration `yaml: "ping-speed"`
+	DownloadSpeed    string        `yaml: "download-speed"`
+	IPv6             bool          `yaml: ipv6`
 }
 
 func (m Mirror) Ping() time.Duration {
@@ -60,7 +64,7 @@ func contains(a []string, x string) bool {
 }
 
 func osInfo() (id, version string) {
-	f, e := ioutil.ReadFile("os-release")
+	f, e := ioutil.ReadFile("/etc/os-release")
 	if e != nil {
 		log.Println("can't open /etc/os-release")
 		log.Fatal(e)

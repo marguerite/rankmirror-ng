@@ -1,0 +1,9 @@
+* yaml config (local machine and mirror)
+* geo location of the mirror
+* geo location of you
+* the physical distance
+* the route length
+* the ping speed
+* the actual download speed
+* operate on /etc/zypp/repos.d/*.repo file (a struct type)
+* crawler: craw distro and versions
