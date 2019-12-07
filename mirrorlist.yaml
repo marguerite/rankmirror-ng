@@ -1,13 +1,13 @@
 -
   name:
-  raw:  "https://mirrors.aliyun.com/opensuse"
+  raw:  "https://mirrors.tuna.tsinghua.edu.cn/opensuse"
   distro:
   version:
   country:
   latitude:
   longitude:
   distance:
-  route:
   ping:
   download:
+  weight:
   ipv6: false

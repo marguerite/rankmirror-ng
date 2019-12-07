@@ -4,7 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"io/ioutil"
-	"log"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PuerkitoBio/goquery"
+	"github.com/cavaliercoder/grab"
 	geoip2 "github.com/oschwald/geoip2-golang"
 	"github.com/tatsushid/go-fastping"
 	yaml "gopkg.in/yaml.v2"
@@ -34,11 +36,27 @@ func readMirrorList(file string) (MirrorList, error) {
 	return mirrorlist, nil
 }
 
+func readConfig(file string) (Config, error) {
+	config := Config{}
+
+	b, err := ioutil.ReadFile(file)
+	if err != nil {
+		return config, err
+	}
+
+	err = yaml.Unmarshal(b, &config)
+	if err != nil {
+		return config, err
+	}
+
+	return config, nil
+}
+
 type MirrorList []Mirror
 
-func (mirrorlist *MirrorList) preload(force bool) {
+func (mirrorlist *MirrorList) preload(config Config, force bool) {
 	for i := range *mirrorlist {
-		err := (*mirrorlist)[i].preload(force)
+		err := (*mirrorlist)[i].preload(config, force)
 		if err != nil {
 			fmt.Println(err)
 			continue
@@ -47,21 +65,21 @@ func (mirrorlist *MirrorList) preload(force bool) {
 }
 
 type Mirror struct {
-	Name             string        `yaml:"name"`
-	Raw              string        `yaml:"raw"`
-	Distro           string        `yaml: "distro"`
-	Version          []string      `yaml: "version"`
-	Country          string        `yaml: "country"`
-	Latitude         float64       `yaml: "latitude"`
-	Longitude        float64       `yaml: "longitude"`
-	PhysicalDistance string        `yaml: "distance"`
-	RouteLength      string        `yaml: "route"`
-	PingSpeed        time.Duration `yaml: "ping"`
-	DownloadSpeed    string        `yaml: "download"`
-	IPv6             bool          `yaml: "ipv6"`
+	Name          string        `yaml:"name"`
+	Raw           string        `yaml:"raw"`
+	Distro        string        `yaml: "distro"`
+	Version       []string      `yaml: "version"`
+	Country       string        `yaml: "country"`
+	Latitude      float64       `yaml: "latitude"`
+	Longitude     float64       `yaml: "longitude"`
+	Distance      float64       `yaml: "distance"`
+	PingSpeed     time.Duration `yaml: "ping"`
+	DownloadSpeed time.Duration `yaml: "download"`
+	Weight        float64       `yaml: "weight"`
+	IPv6          bool          `yaml: "ipv6"`
 }
 
-func (m *Mirror) preload(force bool) error {
+func (m *Mirror) preload(config Config, force bool) error {
 	// Raw is a must field
 	if len(m.Raw) == 0 {
 		return fmt.Errorf("raw field is required: %v", *m)
@@ -81,39 +99,177 @@ func (m *Mirror) preload(force bool) error {
 		}
 	}
 
-	if len(m.Version) == 0 {
-		m.Version = probeDistroVersions(m.Distro, m.Raw)
-	}
-
-	if len(m.Country) == 0 {
+	if len(m.Version) == 0 || force {
 		var err error
-		m.Country, m.Latitude, m.Longitude, err = probeGeoLocation(m.Raw)
+		m.Version, err = probeDistroVersions(m.Distro, m.Raw)
 		if err != nil {
-			return fmt.Errorf("probeGeoLocation failed: %v, %v", err, *m)
+			return fmt.Errorf("Unsupported OS: %s, %v", m.Distro, *m)
 		}
 	}
 
-	if m.Latitude == 0 || m.Longitude == 0 {
-		var err error
-		_, m.Latitude, m.Longitude, err = probeGeoLocation(m.Raw)
+	if len(m.Country) == 0 || m.Latitude == 0 || m.Longitude == 0 || force {
+		uri, _ := url.Parse(m.Raw)
+		ra, err := net.ResolveIPAddr("ip4", uri.Host)
 		if err != nil {
-			return fmt.Errorf("probeGeoLocation failed: %v, %v", err, *m)
+			return fmt.Errorf("geoLocateIP failed: %v, %v", err, *m)
 		}
+		m.Country, m.Latitude, m.Longitude, err = geoLocateIP(ra.String())
+		if err != nil {
+			return fmt.Errorf("geoLocateIP failed: %v, %v", err, *m)
+		}
+	}
+
+	if m.Distance == 0 || force {
+		m.Distance = calGeoDistance(m.Latitude, m.Longitude, config.Latitude, config.Longitude)
+	}
+
+	if m.PingSpeed == 0 || force {
+		m.PingSpeed, _ = m.Ping()
+	}
+
+	if m.DownloadSpeed == 0 || force {
+		m.DownloadSpeed, _ = m.TryDownload()
+	}
+
+	if m.Weight == 0 || force {
+		m.Weight = m.Distance * m.PingSpeed.Seconds() * m.DownloadSpeed.Seconds()
 	}
 
 	return nil
 }
 
-func probeDistroVersions(distro, raw string) []string {
-	versions := []string{}
-	paths := []string{}
-	suffix := ""
+func (m Mirror) Repo(version string) (string, error) {
+	suffix, err := genRepoSuffix(m.Distro)
+	if err != nil {
+		return "", err
+	}
+	uri, _ := url.Parse(m.Raw)
+	uri.Path = path.Join(uri.Path, version, suffix)
+	return uri.String(), nil
+}
 
+func (m Mirror) Ping() (time.Duration, error) {
+	var t time.Duration
+	protocol := "ip4:icmp"
+	pinger := fastping.NewPinger()
+	if m.IPv6 {
+		protocol = "ip6:icmp"
+	}
+
+	uri, _ := url.Parse(m.Raw)
+
+	ra, err := net.ResolveIPAddr(protocol, uri.Host)
+	if err != nil {
+		return t, err
+	}
+	pinger.AddIPAddr(ra)
+	pinger.OnRecv = func(addr *net.IPAddr, rtt time.Duration) {
+		t = rtt
+	}
+	pinger.OnIdle = func() {}
+	err = pinger.Run()
+	if err != nil {
+		return t, err
+	}
+	return t, nil
+}
+
+func (m Mirror) TryDownload() (time.Duration, error) {
+	var t time.Duration
+	repo, _ := m.Repo(m.Version[0])
+	fmt.Println(repo)
+	resp, err := http.Get(repo)
+	if err != nil {
+		fmt.Println(err)
+		return t, err
+	}
+	defer resp.Body.Close()
+
+	doc, err := goquery.NewDocumentFromReader(resp.Body)
+	if err != nil {
+		return t, nil
+	}
+
+	file, _ := doc.Find("table#list tbody tr:nth-child(2) td a").Attr("href")
+	uri, _ := url.Parse(repo)
+	uri.Path = path.Join(uri.Path, file)
+
+	t1 := time.Now()
+
+	done := make(chan bool)
+	var err1 error
+
+	go func() {
+		resp, err := grab.Get(path.Join("/tmp", path.Base(uri.String())), uri.String())
+		if err != nil {
+			err1 = err
+			done <- true
+		}
+		if resp.IsComplete() {
+			done <- true
+		}
+	}()
+
+	<-done
+
+	if err1 != nil {
+		return t, err1
+	}
+
+	t = time.Now().Sub(t1)
+
+	return t, nil
+}
+
+func calGeoDistance(lat1, lng1, lat2, lng2 float64) float64 {
+	radlat1 := float64(math.Pi * lat1 / 180)
+	radlat2 := float64(math.Pi * lat2 / 180)
+
+	theta := float64(lng1 - lng2)
+	radtheta := float64(math.Pi * theta / 180)
+
+	dist := math.Sin(radlat1)*math.Sin(radlat2) + math.Cos(radlat1)*math.Cos(radlat2)*math.Cos(radtheta)
+
+	if dist > 1 {
+		dist = 1
+	}
+
+	dist = math.Acos(dist)
+	dist = dist * 180 / math.Pi
+	dist = dist * 60 * 1.1515 * 1.609344
+
+	return dist
+}
+
+func genRepoPaths(distro string) ([]string, error) {
+	paths := []string{}
 	switch distro {
 	case "opensuse":
 		paths = []string{"distribution/leap/15.1", "distribution/leap/15.2", "distribution/leap/15.3", "tumbleweed"}
-		suffix = "repo/oss"
+	default:
+		return paths, fmt.Errorf("Unhandle Linux distribution %s", distro)
 	}
+	return paths, nil
+}
+
+func genRepoSuffix(distro string) (string, error) {
+	suffix := ""
+	switch distro {
+	case "opensuse":
+		suffix = "repo/oss/repodata"
+	default:
+		return suffix, fmt.Errorf("Unhandle Linux distribution %s", distro)
+	}
+	return suffix, nil
+}
+
+func probeDistroVersions(distro, raw string) ([]string, error) {
+	versions := []string{}
+	paths, err := genRepoPaths(distro)
+	if err != nil {
+		return versions, err
+	}
+	suffix, _ := genRepoSuffix(distro)
 
 	timeout := time.Duration(3 * time.Second)
 
@@ -132,23 +288,17 @@ func probeDistroVersions(distro, raw string) []string {
 		}
 	}
 
-	return versions
+	return versions, nil
 }
 
-func probeGeoLocation(raw string) (string, float64, float64, error) {
-	uri, _ := url.Parse(raw)
-	ra, err := net.ResolveIPAddr("ip4", uri.Host)
-	if err != nil {
-		return "", 0, 0, err
-	}
-	ip := net.ParseIP(ra.String())
-
+func geoLocateIP(raw string) (string, float64, float64, error) {
 	db, err := geoip2.Open("GeoLite2-City.mmdb")
 	if err != nil {
 		return "", 0, 0, err
 	}
 	defer db.Close()
 
+	ip := net.ParseIP(raw)
 	record, err := db.City(ip)
 	if err != nil {
 		return "", 0, 0, err
@@ -156,86 +306,67 @@ func probeGeoLocation(raw string) (string, float64, float64, error) {
 	return record.Country.Names["en"], record.Location.Latitude, record.Location.Longitude, nil
 }
 
-func (m Mirror) Ping() time.Duration {
-	var t time.Duration
-	protocol := "ip4:icmp"
-	pinger := fastping.NewPinger()
-	if m.IPv6 {
-		protocol = "ip6:icmp"
-	}
-
-	uri, _ := url.Parse(m.Raw)
-
-	ra, err := net.ResolveIPAddr(protocol, uri.Host)
-	if err != nil {
-		log.Println(err)
-		return t
-	}
-	pinger.AddIPAddr(ra)
-	pinger.OnRecv = func(addr *net.IPAddr, rtt time.Duration) {
-		t = rtt
-	}
-	pinger.OnIdle = func() {}
-	err = pinger.Run()
-	if err != nil {
-		log.Fatal(err)
-	}
-	return t
+type Config struct {
+	OS        string
+	Version   string
+	IP        string
+	Latitude  float64
+	Longitude float64
 }
 
-func contains(a []string, x string) bool {
-	for _, v := range a {
-		if x == v {
-			return true
-		}
+func (c *Config) preload(force bool) {
+	os, version, _ := osInfo()
+	ip, _ := probeIP()
+	_, la, lo, _ := geoLocateIP(ip)
+
+	if len(c.OS) == 0 {
+		c.OS = os
 	}
-	return false
+
+	if len(c.Version) == 0 || c.Version != version {
+		c.Version = version
+	}
+
+	if c.Latitude == 0 || c.Longitude == 0 || c.IP != ip || force {
+		c.Latitude = la
+		c.Longitude = lo
+	}
+
+	if len(c.IP) == 0 || c.IP != ip || force {
+		c.IP = ip
+	}
 }
 
-func osInfo() (id, version string) {
-	f, e := ioutil.ReadFile("/etc/os-release")
-	if e != nil {
-		log.Println("can't open /etc/os-release")
-		log.Fatal(e)
+func osInfo() (string, string, error) {
+	f, err := ioutil.ReadFile("/etc/os-release")
+	if err != nil {
+		return "", "", err
 	}
-
-	SUPPORTED_OS := []string{"tumbleweed", "leap", "fedora", "arch"}
 
 	id_r := regexp.MustCompile(`(?m)^ID=("opensuse-)?([^"]+)(")?$`)
 	ver_r := regexp.MustCompile(`(?m)^VERSION_ID=(")?([^"]+)(")?$`)
 
-	id = id_r.FindStringSubmatch(string(f))[2]
+	id := id_r.FindStringSubmatch(string(f))[2]
+	version := "0.0"
 
-	if !contains(SUPPORTED_OS, id) {
-		log.Fatal("Unsupported OS: " + id)
-	}
-
-	version = "0.0"
-	if id == "leap" || id == "fedora" {
+	if ver_r.MatchString(string(f)) {
 		version = ver_r.FindStringSubmatch(string(f))[2]
 	}
 
-	return id, version
+	return id, version, nil
 }
 
-func (m Mirror) FullURL() string {
-	ma := make(map[string]string)
-	ma["leap"] = "/distribution/leap/" // 15.0/repo/oss
-	ma["tumbleweed"] = "/tumbleweed/repo/oss/"
-	ma["fedora"] = "/releases/" // 28/Everything/x86_64/os/
-	ma["arch"] = "/core/os/x86_64/"
-
-	url := m.Raw + ma[m.Distro]
-
-	if m.Distro == "leap" {
-		url += m.Version[0] + "/repo/oss/"
+func probeIP() (string, error) {
+	resp, err := http.Get("https://myexternalip.com/raw")
+	if err != nil {
+		return "", err
 	}
-
-	if m.Distro == "fedora" {
-		url += m.Version[0] + "/Everything/x86_64/os/"
+	defer resp.Body.Close()
+	b, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
 	}
-
-	return url
+	return string(b), nil
 }
 
 func main() {
@@ -254,7 +385,9 @@ func main() {
 	//fmt.Println(m.Ping())
 
 	mirrorlist, _ := readMirrorList("mirrorlist.yaml")
-	fmt.Println(mirrorlist)
-	mirrorlist.preload(false)
+	config, _ := readConfig("config.yaml")
+	config.preload(false)
+	fmt.Println(config)
+	mirrorlist.preload(config, false)
 	fmt.Println(mirrorlist)
 }
