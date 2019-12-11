@@ -11,3 +11,16 @@
   download:
   weight:
   ipv6: false
+-
+  name: "USTC"
+  raw:  "http://mirrors.ustc.edu.cn/opensuse"
+  distro:
+  version:
+  country:
+  latitude:
+  longitude:
+  distance:
+  ping:
+  download:
+  weight:
+  ipv6: false

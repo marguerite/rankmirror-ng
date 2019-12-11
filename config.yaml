@@ -3,3 +3,7 @@ version:
 ip:
 latitude:
 longitude:
+physical-distance-weight:
+route-length-weight:
+download-speed-weight:
+ping-speed-weight:

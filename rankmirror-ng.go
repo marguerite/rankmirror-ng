@@ -124,15 +124,25 @@ func (m *Mirror) preload(config Config, force bool) error {
 	}
 
 	if m.PingSpeed == 0 || force {
-		m.PingSpeed, _ = m.Ping()
+		ping, _ := m.Ping()
+		if ping == 0 {
+			m.PingSpeed, _ = time.ParseDuration("999h")
+		} else {
+			m.PingSpeed = ping
+		}
 	}
 
 	if m.DownloadSpeed == 0 || force {
-		m.DownloadSpeed, _ = m.TryDownload()
+		download, _ := m.TryDownload()
+		if download == 0 {
+			m.DownloadSpeed, _ = time.ParseDuration("999h")
+		} else {
+			m.DownloadSpeed = download
+		}
 	}
 
 	if m.Weight == 0 || force {
-		m.Weight = m.Distance * m.PingSpeed.Seconds() * m.DownloadSpeed.Seconds()
+		m.Weight = m.Distance*config.DistanceWeight + m.PingSpeed.Seconds()*config.PingWeight + m.DownloadSpeed.Seconds()*config.DownloadWeight
 	}
 
 	return nil
@@ -307,11 +317,15 @@ func geoLocateIP(raw string) (string, float64, float64, error) {
 }
 
 type Config struct {
-	OS        string
-	Version   string
-	IP        string
-	Latitude  float64
-	Longitude float64
+	OS             string
+	Version        string
+	IP             string
+	Latitude       float64
+	Longitude      float64
+	DistanceWeight float64
+	RouteWeight    float64
+	PingWeight     float64
+	DownloadWeight float64
 }
 
 func (c *Config) preload(force bool) {
@@ -334,6 +348,22 @@ func (c *Config) preload(force bool) {
 
 	if len(c.IP) == 0 || c.IP != ip || force {
 		c.IP = ip
+	}
+
+	if c.DistanceWeight == 0 {
+		c.DistanceWeight = 0.25
+	}
+
+	if c.RouteWeight == 0 {
+		c.RouteWeight = 0.25
+	}
+
+	if c.PingWeight == 0 {
+		c.PingWeight = 0.25
+	}
+
+	if c.DownloadWeight == 0 {
+		c.DownloadWeight = 0.25
 	}
 }
 
