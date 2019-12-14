@@ -1,9 +1,10 @@
-os: "tumbleweed"
-version:
+os: tumbleweed
+version: "20190815"
 ip:
 latitude:
 longitude:
-physical-distance-weight:
-route-length-weight:
-download-speed-weight:
-ping-speed-weight:
+distanceweight: 0.2
+routelevelweight: 0.2
+routetimeweight: 0.2
+pingweight: 0.2
+downloadweight: 0.2

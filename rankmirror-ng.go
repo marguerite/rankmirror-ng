@@ -10,20 +10,22 @@ import (
 	"net/url"
 	"path"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
+	"github.com/aeden/traceroute"
 	"github.com/cavaliercoder/grab"
 	geoip2 "github.com/oschwald/geoip2-golang"
 	"github.com/tatsushid/go-fastping"
 	yaml "gopkg.in/yaml.v2"
 )
 
-func readMirrorList(file string) (MirrorList, error) {
+func readMirrorList() (MirrorList, error) {
 	mirrorlist := MirrorList{}
 
-	b, err := ioutil.ReadFile(file)
+	b, err := ioutil.ReadFile("mirrorlist.yaml")
 	if err != nil {
 		return mirrorlist, err
 	}
@@ -36,10 +38,10 @@ func readMirrorList(file string) (MirrorList, error) {
 	return mirrorlist, nil
 }
 
-func readConfig(file string) (Config, error) {
+func readConfig() (Config, error) {
 	config := Config{}
 
-	b, err := ioutil.ReadFile(file)
+	b, err := ioutil.ReadFile("config.yaml")
 	if err != nil {
 		return config, err
 	}
@@ -64,19 +66,57 @@ func (mirrorlist *MirrorList) preload(config Config, force bool) {
 	}
 }
 
+func (mirrorlist MirrorList) save() {
+	b, err := yaml.Marshal(mirrorlist)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	err = ioutil.WriteFile("mirrorlist.yaml", b, 0644)
+	if err != nil {
+		fmt.Println(err)
+	}
+}
+
+func (mirrorlist MirrorList) Len() int {
+	return len(mirrorlist)
+}
+
+func (mirrorlist MirrorList) Less(i, j int) bool {
+	return mirrorlist[i].Weight < mirrorlist[j].Weight
+}
+
+func (mirrorlist MirrorList) Swap(i, j int) {
+	mirrorlist[i], mirrorlist[j] = mirrorlist[j], mirrorlist[j]
+}
+
+func (mirrorlist MirrorList) Rank() []string {
+	ranks := []string{}
+	sort.Sort(mirrorlist)
+	for _, m := range mirrorlist {
+		fmt.Println(m.Raw)
+		ranks = append(ranks, m.Raw)
+	}
+	return ranks
+}
+
 type Mirror struct {
-	Name          string        `yaml:"name"`
-	Raw           string        `yaml:"raw"`
-	Distro        string        `yaml: "distro"`
-	Version       []string      `yaml: "version"`
-	Country       string        `yaml: "country"`
-	Latitude      float64       `yaml: "latitude"`
-	Longitude     float64       `yaml: "longitude"`
-	Distance      float64       `yaml: "distance"`
-	PingSpeed     time.Duration `yaml: "ping"`
-	DownloadSpeed time.Duration `yaml: "download"`
-	Weight        float64       `yaml: "weight"`
-	IPv6          bool          `yaml: "ipv6"`
+	Name                string        `yaml:"name"`
+	IP                  string        `yaml:"ip"`
+	Raw                 string        `yaml:"raw"`
+	Distro              string        `yaml: "distro"`
+	Version             []string      `yaml: "version"`
+	Country             string        `yaml: "country"`
+	Latitude            float64       `yaml: "latitude"`
+	Longitude           float64       `yaml: "longitude"`
+	Distance            float64       `yaml: "distance"`
+	RouteLevel          float64       `yaml: "routelevel"`
+	RouteTime           time.Duration `yaml: "routetime"`
+	PingSpeed           time.Duration `yaml: "ping"`
+	DownloadSpeed       time.Duration `yaml: "download"`
+	DownloadCssSelector string        `yaml: "downloadcssselector"`
+	Weight              float64       `yaml: "weight"`
+	IPv6                bool          `yaml: "ipv6"`
 }
 
 func (m *Mirror) preload(config Config, force bool) error {
@@ -85,8 +125,18 @@ func (m *Mirror) preload(config Config, force bool) error {
 		return fmt.Errorf("raw field is required: %v", *m)
 	}
 
+	if len(m.IP) == 0 {
+		uri, _ := url.Parse(m.Raw)
+		ip, err := net.ResolveIPAddr("ip", uri.Host)
+		if err != nil {
+			return fmt.Errorf("Failed to resolve %s", uri.Host)
+		}
+		m.IP = ip.String()
+	}
+
 	if len(m.Name) == 0 {
-		re := regexp.MustCompile(`([\.\/])?(\w+)\.\w+($|\/)`)
+		// https://mirrors.tuna.tsinghua.edu.cn/opensuse
+		re := regexp.MustCompile(`mirror(s)?\.(\w+)`)
 		m.Name = strings.Title(re.FindStringSubmatch(m.Raw)[2])
 	}
 
@@ -108,12 +158,8 @@ func (m *Mirror) preload(config Config, force bool) error {
 	}
 
 	if len(m.Country) == 0 || m.Latitude == 0 || m.Longitude == 0 || force {
-		uri, _ := url.Parse(m.Raw)
-		ra, err := net.ResolveIPAddr("ip4", uri.Host)
-		if err != nil {
-			return fmt.Errorf("geoLocateIP failed: %v, %v", err, *m)
-		}
-		m.Country, m.Latitude, m.Longitude, err = geoLocateIP(ra.String())
+		var err error
+		m.Country, m.Latitude, m.Longitude, err = geoLocateIP(m.IP)
 		if err != nil {
 			return fmt.Errorf("geoLocateIP failed: %v, %v", err, *m)
 		}
@@ -132,8 +178,25 @@ func (m *Mirror) preload(config Config, force bool) error {
 		}
 	}
 
+	if m.RouteLevel == 0 || force {
+		fmt.Printf("Traceroute %s\n", m.Raw)
+		level, speed, err := m.TraceRoute()
+		if err != nil {
+			return err
+		}
+		m.RouteLevel = level
+		if speed == 0 {
+			speed1, _ := time.ParseDuration("999h")
+			speed = speed1
+		}
+		m.RouteTime = speed
+	}
+
 	if m.DownloadSpeed == 0 || force {
-		download, _ := m.TryDownload()
+		download, err := m.TryDownload()
+		if err != nil {
+			return err
+		}
 		if download == 0 {
 			m.DownloadSpeed, _ = time.ParseDuration("999h")
 		} else {
@@ -142,7 +205,7 @@ func (m *Mirror) preload(config Config, force bool) error {
 	}
 
 	if m.Weight == 0 || force {
-		m.Weight = m.Distance*config.DistanceWeight + m.PingSpeed.Seconds()*config.PingWeight + m.DownloadSpeed.Seconds()*config.DownloadWeight
+		m.Weight = m.Distance*config.DistanceWeight + m.RouteLevel*config.RouteLevelWeight + m.RouteTime.Seconds()*config.RouteTimeWeight + m.PingSpeed.Seconds()*config.PingWeight + m.DownloadSpeed.Seconds()*config.DownloadWeight
 	}
 
 	return nil
@@ -165,10 +228,7 @@ func (m Mirror) Ping() (time.Duration, error) {
 	if m.IPv6 {
 		protocol = "ip6:icmp"
 	}
-
-	uri, _ := url.Parse(m.Raw)
-
-	ra, err := net.ResolveIPAddr(protocol, uri.Host)
+	ra, err := net.ResolveIPAddr(protocol, m.IP)
 	if err != nil {
 		return t, err
 	}
@@ -184,10 +244,45 @@ func (m Mirror) Ping() (time.Duration, error) {
 	return t, nil
 }
 
+func (m Mirror) TraceRoute() (float64, time.Duration, error) {
+	var t time.Duration
+	opts := traceroute.TracerouteOptions{}
+	opts.SetTimeoutMs(10)
+	opts.SetRetries(0)
+	opts.SetMaxHops(20)
+	c := make(chan traceroute.TracerouteHop, 0)
+	level := 0.0
+	go func() {
+		for {
+			hop, ok := <-c
+			if !ok {
+				return
+			}
+			addr := fmt.Sprintf("%v.%v.%v.%v", hop.Address[0], hop.Address[1], hop.Address[2], hop.Address[3])
+			hostOrAddr := addr
+			if hop.Host != "" {
+				hostOrAddr = hop.Host
+			}
+			if hop.Success {
+				fmt.Printf("%-3d %v (%v) %v\n", hop.TTL, hostOrAddr, addr, hop.ElapsedTime)
+				t += hop.ElapsedTime
+			} else {
+				fmt.Printf("%-3d *\n", hop.TTL)
+			}
+			level += 1
+		}
+	}()
+
+	_, err := traceroute.Traceroute(m.IP, &opts, c)
+	if err != nil {
+		return 999, t, err
+	}
+	return level, t, nil
+}
+
 func (m Mirror) TryDownload() (time.Duration, error) {
 	var t time.Duration
 	repo, _ := m.Repo(m.Version[0])
-	fmt.Println(repo)
 	resp, err := http.Get(repo)
 	if err != nil {
 		fmt.Println(err)
@@ -199,8 +294,10 @@ func (m Mirror) TryDownload() (time.Duration, error) {
 	if err != nil {
 		return t, nil
 	}
-
-	file, _ := doc.Find("table#list tbody tr:nth-child(2) td a").Attr("href")
+	file, _ := doc.Find(m.DownloadCssSelector).Attr("href")
+	if len(file) == 0 {
+		return t, fmt.Errorf("No matched CSS Selector found: %s, uri %s", m.DownloadCssSelector, repo)
+	}
 	uri, _ := url.Parse(repo)
 	uri.Path = path.Join(uri.Path, file)
 
@@ -317,15 +414,16 @@ func geoLocateIP(raw string) (string, float64, float64, error) {
 }
 
 type Config struct {
-	OS             string
-	Version        string
-	IP             string
-	Latitude       float64
-	Longitude      float64
-	DistanceWeight float64
-	RouteWeight    float64
-	PingWeight     float64
-	DownloadWeight float64
+	OS               string  `yaml: "os"`
+	Version          string  `yaml: "version"`
+	IP               string  `yaml: "ip"`
+	Latitude         float64 `yaml: "latitude"`
+	Longitude        float64 `yaml: "longtitude"`
+	DistanceWeight   float64 `yaml: "physicaldistanceweight"`
+	RouteLevelWeight float64 `yaml: "routelevelweight"`
+	RouteTimeWeight  float64 `yaml: "routetimeweight"`
+	PingWeight       float64 `yaml: "pingspeedweight"`
+	DownloadWeight   float64 `yaml: "downloadspeedweight"`
 }
 
 func (c *Config) preload(force bool) {
@@ -351,19 +449,35 @@ func (c *Config) preload(force bool) {
 	}
 
 	if c.DistanceWeight == 0 {
-		c.DistanceWeight = 0.25
+		c.DistanceWeight = 0.2
 	}
 
-	if c.RouteWeight == 0 {
-		c.RouteWeight = 0.25
+	if c.RouteLevelWeight == 0 {
+		c.RouteLevelWeight = 0.2
+	}
+
+	if c.RouteTimeWeight == 0 {
+		c.RouteTimeWeight = 0.2
 	}
 
 	if c.PingWeight == 0 {
-		c.PingWeight = 0.25
+		c.PingWeight = 0.2
 	}
 
 	if c.DownloadWeight == 0 {
-		c.DownloadWeight = 0.25
+		c.DownloadWeight = 0.2
+	}
+}
+
+func (c Config) save() {
+	b, err := yaml.Marshal(c)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	err = ioutil.WriteFile("config.yaml", b, 0644)
+	if err != nil {
+		fmt.Println(err)
 	}
 }
 
@@ -414,10 +528,12 @@ func main() {
 	//m := Mirror{"阿里云", raw, uri, distro, []string{version}, geo, ipv6}
 	//fmt.Println(m.Ping())
 
-	mirrorlist, _ := readMirrorList("mirrorlist.yaml")
-	config, _ := readConfig("config.yaml")
+	mirrorlist, _ := readMirrorList()
+	config, _ := readConfig()
 	config.preload(false)
 	fmt.Println(config)
+	config.save()
 	mirrorlist.preload(config, false)
-	fmt.Println(mirrorlist)
+	mirrorlist.Rank()
+	mirrorlist.save()
 }
