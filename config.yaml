@@ -1,4 +1,5 @@
-os: tumbleweed
+os: opensuse
+variant: tumbleweed
 version: "20190815"
 ip:
 latitude:

@@ -8,15 +8,19 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"path"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/aeden/traceroute"
 	"github.com/cavaliercoder/grab"
+	"github.com/marguerite/util/slice"
+	"github.com/olekukonko/tablewriter"
 	geoip2 "github.com/oschwald/geoip2-golang"
 	"github.com/tatsushid/go-fastping"
 	yaml "gopkg.in/yaml.v2"
@@ -90,14 +94,28 @@ func (mirrorlist MirrorList) Swap(i, j int) {
 	mirrorlist[i], mirrorlist[j] = mirrorlist[j], mirrorlist[j]
 }
 
-func (mirrorlist MirrorList) Rank() []string {
-	ranks := []string{}
+func (mirrorlist MirrorList) Rank(config Config) {
 	sort.Sort(mirrorlist)
+	result := [][]string{}
 	for _, m := range mirrorlist {
-		fmt.Println(m.Raw)
-		ranks = append(ranks, m.Raw)
+		if m.Distro != config.OS {
+			continue
+		}
+		if ok, err := slice.Contains(m.Version, config.Variant); !ok || err != nil {
+			continue
+		}
+		w, _ := strconv.ParseFloat(fmt.Sprintf("%.2f", m.Weight), 64)
+		result = append(result, []string{m.Name, m.Country,
+			strconv.FormatFloat(w, 'f', -1, 64),
+			fmt.Sprintf("%.2f", m.Distance) + "km",
+			m.RouteTime.String() + " (" + strconv.FormatFloat(m.RouteLevel, 'f', -1, 64) + " levels)",
+			m.PingSpeed.String(), m.DownloadSpeed.String(), m.Raw})
 	}
-	return ranks
+	table := tablewriter.NewWriter(os.Stdout)
+	table.SetHeader([]string{"Name", "Location", "Weight", "Distance", "Route", "Ping", "Download", "Mirror URL"})
+	table.SetBorder(false)
+	table.AppendBulk(result)
+	table.Render()
 }
 
 type Mirror struct {
@@ -415,6 +433,7 @@ func geoLocateIP(raw string) (string, float64, float64, error) {
 
 type Config struct {
 	OS               string  `yaml: "os"`
+	Variant          string  `yaml: "variant"`
 	Version          string  `yaml: "version"`
 	IP               string  `yaml: "ip"`
 	Latitude         float64 `yaml: "latitude"`
@@ -427,12 +446,16 @@ type Config struct {
 }
 
 func (c *Config) preload(force bool) {
-	os, version, _ := osInfo()
+	variant, version, _ := osInfo()
 	ip, _ := probeIP()
 	_, la, lo, _ := geoLocateIP(ip)
 
 	if len(c.OS) == 0 {
-		c.OS = os
+		c.OS = variant
+	}
+
+	if len(c.Variant) == 0 {
+		c.Variant = variant
 	}
 
 	if len(c.Version) == 0 || c.Version != version {
@@ -514,26 +537,29 @@ func probeIP() (string, error) {
 }
 
 func main() {
-	var geo string
-	var ipv6 bool
+	var list bool
+	var update bool
+	var set string
 
-	flag.StringVar(&geo, "geo", "china", "geo location of the mirror.")
-	flag.BoolVar(&ipv6, "ipv6", false, "check ipv6 only.")
-
+	flag.StringVar(&set, "set", "", "the mirror to use via its name")
+	flag.BoolVar(&list, "list", false, "list the mirrors")
+	flag.BoolVar(&update, "update", false, "update the mirrors")
 	flag.Parse()
 
-	//distro, version := osInfo()
-	//raw := "https://mirrors.aliyun.com/opensuse"
-	//uri, _ := url.Parse(raw)
-	//m := Mirror{"阿里云", raw, uri, distro, []string{version}, geo, ipv6}
-	//fmt.Println(m.Ping())
+	config, _ := readConfig()
+	config.preload(update)
+	config.save()
 
 	mirrorlist, _ := readMirrorList()
-	config, _ := readConfig()
-	config.preload(false)
-	fmt.Println(config)
-	config.save()
-	mirrorlist.preload(config, false)
-	mirrorlist.Rank()
+
+	mirrorlist.preload(config, update)
 	mirrorlist.save()
+
+	if list {
+		mirrorlist.Rank(config)
+	}
+
+	if len(set) > 0 {
+
+	}
 }

@@ -6,6 +6,12 @@ github.com/aeden/traceroute
 github.com/andybalholm/cascadia
 # github.com/cavaliercoder/grab v2.0.0+incompatible
 github.com/cavaliercoder/grab
+# github.com/marguerite/util v0.0.0-20191130060341-008b03ab3d6b
+github.com/marguerite/util/slice
+# github.com/mattn/go-runewidth v0.0.7
+github.com/mattn/go-runewidth
+# github.com/olekukonko/tablewriter v0.0.4
+github.com/olekukonko/tablewriter
 # github.com/oschwald/geoip2-golang v1.3.0
 github.com/oschwald/geoip2-golang
 # github.com/oschwald/maxminddb-golang v1.5.0
