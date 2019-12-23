@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path"
 	"regexp"
 	"sort"
@@ -60,11 +61,39 @@ func readConfig() (Config, error) {
 	return config, nil
 }
 
+func logname() string {
+	cmd, _ := exec.Command("logname").Output()
+	return strings.TrimSuffix(string(cmd), "\n")
+}
+
+func readGeoDB() ([]byte, error) {
+	db := "/usr/share/rankmirror-ng/GeoLite2-City.mmdb"
+	if _, err := os.Stat(db); os.IsNotExist(err) {
+		userDB := path.Join("/home", logname(), "/.config/rankmirror-ng/GeoLite2-City.mmdb")
+		if _, err1 := os.Stat(userDB); os.IsNotExist(err1) {
+			if _, err2 := os.Stat("GeoLite2-City.mmdb"); os.IsNotExist(err2) {
+				//FIXME: download and place?
+				return []byte{}, fmt.Errorf("No GeoLite2-City.mmdb found")
+			} else {
+				db = "GeoLite2-City.mmdb"
+			}
+		} else {
+			db = userDB
+		}
+	}
+
+	data, err := ioutil.ReadFile(db)
+	if err != nil {
+		return []byte{}, err
+	}
+	return data, nil
+}
+
 type MirrorList []Mirror
 
-func (mirrorlist *MirrorList) preload(config Config, force bool) {
+func (mirrorlist *MirrorList) preload(config Config, force bool, geoDB []byte) {
 	for i := range *mirrorlist {
-		err := (*mirrorlist)[i].preload(config, force)
+		err := (*mirrorlist)[i].preload(config, force, geoDB)
 		if err != nil {
 			fmt.Println(err)
 			continue
@@ -111,7 +140,7 @@ func (mirrorlist MirrorList) Rank(config Config) {
 			strconv.FormatFloat(w, 'f', -1, 64),
 			fmt.Sprintf("%.2f", m.Distance) + "km",
 			m.RouteTime.String() + " (" + strconv.FormatFloat(m.RouteLevel, 'f', -1, 64) + " levels)",
-			m.PingSpeed.String(), m.DownloadSpeed.String(), m.Raw})
+			m.PingSpeed.String(), fmt.Sprintf("%.2f", m.DownloadSpeed) + " KB/S", m.Raw})
 	}
 	table := tablewriter.NewWriter(os.Stdout)
 	table.SetHeader([]string{"Name", "Location", "Weight", "Distance", "Route", "Ping", "Download", "Mirror URL"})
@@ -133,12 +162,12 @@ type Mirror struct {
 	RouteLevel    float64       `yaml: "routelevel"`
 	RouteTime     time.Duration `yaml: "routetime"`
 	PingSpeed     time.Duration `yaml: "ping"`
-	DownloadSpeed time.Duration `yaml: "download"`
+	DownloadSpeed float64       `yaml: "download"`
 	Weight        float64       `yaml: "weight"`
 	IPv6          bool          `yaml: "ipv6"`
 }
 
-func (m *Mirror) preload(config Config, force bool) error {
+func (m *Mirror) preload(config Config, force bool, geoDB []byte) error {
 	// Raw is a must field
 	if len(m.Raw) == 0 {
 		return fmt.Errorf("raw field is required: %v", *m)
@@ -178,7 +207,7 @@ func (m *Mirror) preload(config Config, force bool) error {
 
 	if len(m.Country) == 0 || m.Latitude == 0 || m.Longitude == 0 || force {
 		var err error
-		m.Country, m.Latitude, m.Longitude, err = geoLocateIP(m.IP)
+		m.Country, m.Latitude, m.Longitude, err = geoLocateIP(m.IP, geoDB)
 		if err != nil {
 			return fmt.Errorf("geoLocateIP failed: %v, %v", err, *m)
 		}
@@ -216,15 +245,15 @@ func (m *Mirror) preload(config Config, force bool) error {
 		if err != nil {
 			return err
 		}
+
+		m.DownloadSpeed = download
 		if download == 0 {
-			m.DownloadSpeed, _ = time.ParseDuration("999h")
-		} else {
-			m.DownloadSpeed = download
+			m.DownloadSpeed = 0.001
 		}
 	}
 
 	if m.Weight == 0 || force {
-		m.Weight = m.Distance*config.DistanceWeight + m.RouteLevel*config.RouteLevelWeight + m.RouteTime.Seconds()*config.RouteTimeWeight + m.PingSpeed.Seconds()*config.PingWeight + m.DownloadSpeed.Seconds()*config.DownloadWeight
+		m.Weight = m.Distance*config.DistanceWeight + m.RouteLevel*config.RouteLevelWeight + m.RouteTime.Seconds()*config.RouteTimeWeight + m.PingSpeed.Seconds()*config.PingWeight + config.DownloadWeight*1/m.DownloadSpeed
 	}
 
 	return nil
@@ -271,6 +300,7 @@ func (m Mirror) TraceRoute() (float64, time.Duration, error) {
 	opts.SetMaxHops(20)
 	c := make(chan traceroute.TracerouteHop, 0)
 	level := 0.0
+	defaultDuration, _ := time.ParseDuration("1s")
 	go func() {
 		for {
 			hop, ok := <-c
@@ -287,6 +317,7 @@ func (m Mirror) TraceRoute() (float64, time.Duration, error) {
 				t += hop.ElapsedTime
 			} else {
 				fmt.Printf("%-3d *\n", hop.TTL)
+				t += defaultDuration
 			}
 			level += 1
 		}
@@ -299,19 +330,22 @@ func (m Mirror) TraceRoute() (float64, time.Duration, error) {
 	return level, t, nil
 }
 
-func (m Mirror) TryDownload() (time.Duration, error) {
-	var t time.Duration
+//TryDownload randomly download a repo metadata file and return the speed in kilobytes/second
+func (m Mirror) TryDownload() (float64, error) {
 	repo, _ := m.Repo(m.Version[0])
 	resp, err := http.Get(repo)
+
+	fmt.Printf("Randomly pick a metadata file from %s\n", repo)
+
 	if err != nil {
 		fmt.Println(err)
-		return t, err
+		return 0, err
 	}
 	defer resp.Body.Close()
 
 	doc, err := goquery.NewDocumentFromReader(resp.Body)
 	if err != nil {
-		return t, nil
+		return 0, nil
 	}
 
 	links := []string{}
@@ -324,7 +358,7 @@ func (m Mirror) TryDownload() (time.Duration, error) {
 		})
 
 	if len(links) == 0 {
-		return t, fmt.Errorf("No repodata found, uri %s", repo)
+		return 0, fmt.Errorf("No repodata found, uri %s", repo)
 	}
 
 	// randomly download a repodata xml
@@ -333,31 +367,33 @@ func (m Mirror) TryDownload() (time.Duration, error) {
 	uri, _ := url.Parse(repo)
 	uri.Path = path.Join(uri.Path, links[random.Int64()])
 
-	t1 := time.Now()
+	file := path.Join("/tmp", strconv.FormatInt(time.Now().UnixNano()/int64(time.Nanosecond), 10)+"-"+path.Base(uri.String()))
+	fmt.Printf("Downloading %s to %s\n", uri.String(), file)
 
-	done := make(chan bool)
-	var err1 error
+	client := grab.NewClient()
+	client.HTTPClient.Timeout = 30 * time.Second
 
-	go func() {
-		resp, err := grab.Get(path.Join("/tmp", path.Base(uri.String())), uri.String())
-		if err != nil {
-			err1 = err
-			done <- true
-		}
-		if resp.IsComplete() {
-			done <- true
-		}
-	}()
+	req, err := grab.NewRequest(file, uri.String())
+	if err != nil {
+		fmt.Println(err)
+		return 0, err
+	}
+	resp1 := client.Do(req)
 
-	<-done
-
-	if err1 != nil {
-		return t, err1
+	if resp1.Err() != nil {
+		fmt.Printf("Download Error: %v\n", resp1.Err())
+		return 0, resp1.Err()
 	}
 
-	t = time.Now().Sub(t1)
+	if resp1.IsComplete() {
+		kilobytesPerSecond := float64(resp1.BytesComplete()/1024.00) / resp1.Duration().Seconds()
+		fmt.Printf("Download Completed with speed %.2f kilobytes/second\n", kilobytesPerSecond)
+		os.RemoveAll(file)
+		return kilobytesPerSecond, nil
+	}
 
-	return t, nil
+	os.RemoveAll(file)
+	return 0, nil
 }
 
 func calGeoDistance(lat1, lng1, lat2, lng2 float64) float64 {
@@ -430,8 +466,8 @@ func probeDistroVersions(distro, raw string) ([]string, error) {
 	return versions, nil
 }
 
-func geoLocateIP(raw string) (string, float64, float64, error) {
-	db, err := geoip2.Open("GeoLite2-City.mmdb")
+func geoLocateIP(raw string, geoDB []byte) (string, float64, float64, error) {
+	db, err := geoip2.FromBytes(geoDB)
 	if err != nil {
 		return "", 0, 0, err
 	}
@@ -459,10 +495,10 @@ type Config struct {
 	DownloadWeight   float64 `yaml: "downloadspeedweight"`
 }
 
-func (c *Config) preload(force bool) {
+func (c *Config) preload(force bool, geoDB []byte) {
 	variant, version, _ := osInfo()
 	ip, _ := probeIP()
-	_, la, lo, _ := geoLocateIP(ip)
+	_, la, lo, _ := geoLocateIP(ip, geoDB)
 
 	if len(c.OS) == 0 {
 		c.OS = variant
@@ -560,13 +596,19 @@ func main() {
 	flag.BoolVar(&update, "update", false, "update the mirrors")
 	flag.Parse()
 
+	db, err := readGeoDB()
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+
 	config, _ := readConfig()
-	config.preload(update)
+	config.preload(update, db)
 	config.save()
 
 	mirrorlist, _ := readMirrorList()
 
-	mirrorlist.preload(config, update)
+	mirrorlist.preload(config, update, db)
 	mirrorlist.save()
 
 	if list {
