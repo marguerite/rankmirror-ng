@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
@@ -92,13 +93,20 @@ func readGeoDB() ([]byte, error) {
 type MirrorList []Mirror
 
 func (mirrorlist *MirrorList) preload(config Config, force bool, geoDB []byte) {
+	wg := sync.WaitGroup{}
+	wg.Add(len(*mirrorlist))
+
 	for i := range *mirrorlist {
-		err := (*mirrorlist)[i].preload(config, force, geoDB)
-		if err != nil {
-			fmt.Println(err)
-			continue
-		}
+		go func(j int) {
+			defer wg.Done()
+			err := (*mirrorlist)[j].preload(config, force, geoDB)
+			if err != nil {
+				fmt.Println(err)
+			}
+		}(i)
 	}
+
+	wg.Wait()
 }
 
 func (mirrorlist MirrorList) save() {
@@ -495,10 +503,8 @@ type Config struct {
 	DownloadWeight   float64 `yaml: "downloadspeedweight"`
 }
 
-func (c *Config) preload(force bool, geoDB []byte) {
+func (c *Config) preload(ip string, geoDB []byte, force bool) {
 	variant, version, _ := osInfo()
-	ip, _ := probeIP()
-	_, la, lo, _ := geoLocateIP(ip, geoDB)
 
 	if len(c.OS) == 0 {
 		c.OS = variant
@@ -513,6 +519,7 @@ func (c *Config) preload(force bool, geoDB []byte) {
 	}
 
 	if c.Latitude == 0 || c.Longitude == 0 || c.IP != ip || force {
+		_, la, lo, _ := geoLocateIP(ip, geoDB)
 		c.Latitude = la
 		c.Longitude = lo
 	}
@@ -596,14 +603,20 @@ func main() {
 	flag.BoolVar(&update, "update", false, "update the mirrors")
 	flag.Parse()
 
-	db, err := readGeoDB()
-	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
+	config, _ := readConfig()
+	ip, _ := probeIP()
+	var db []byte
+
+	if config.IP != ip || update {
+		db1, err := readGeoDB()
+		if err != nil {
+			fmt.Println(err)
+			os.Exit(1)
+		}
+		db = db1
 	}
 
-	config, _ := readConfig()
-	config.preload(update, db)
+	config.preload(ip, db, update)
 	config.save()
 
 	mirrorlist, _ := readMirrorList()

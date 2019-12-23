@@ -11,10 +11,10 @@
   longitude: 116.3889
   distance: 626.801846327229
   routelevel: 20
-  routetime: 95.968032ms
-  pingspeed: 44.684371ms
-  downloadspeed: 2.09724393s
-  weight: 129.8079485320458
+  routetime: 8.110126214s
+  pingspeed: 46.728299ms
+  downloadspeed: 23.52898864748107
+  weight: 131.00024032089965
   ipv6: false
 - name: Ustc
   ip: 218.104.71.170
@@ -29,9 +29,9 @@
   latitude: 31.8642
   longitude: 117.2865
   distance: 1229.9353195978408
-  routelevel: 10
-  routetime: 65.754859ms
-  pingspeed: 999h0m0s
-  downloadspeed: 738.08804ms
-  weight: 719528.1478324994
+  routelevel: 9
+  routetime: 79.616327ms
+  pingspeed: 55.29298ms
+  downloadspeed: 14.376248560945122
+  weight: 247.82795761611436
   ipv6: false
