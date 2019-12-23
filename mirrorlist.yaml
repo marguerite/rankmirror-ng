@@ -10,12 +10,11 @@
   latitude: 39.9288
   longitude: 116.3889
   distance: 626.801846327229
-  routelevel: 19
-  routetime: 120.004627ms
-  pingspeed: 96.947032ms
-  downloadspeed: 201.207172ms
-  downloadcssselector: table#list tbody tr:nth-child(2) td a
-  weight: 129.2440010316458
+  routelevel: 20
+  routetime: 95.968032ms
+  pingspeed: 44.684371ms
+  downloadspeed: 2.09724393s
+  weight: 129.8079485320458
   ipv6: false
 - name: Ustc
   ip: 218.104.71.170
@@ -24,15 +23,15 @@
   version:
   - distribution/leap/15.1
   - distribution/leap/15.2
+  - distribution/leap/15.3
   - tumbleweed
   country: China
   latitude: 31.8642
   longitude: 117.2865
   distance: 1229.9353195978408
   routelevel: 10
-  routetime: 74.513542ms
-  pingspeed: 45.778453ms
-  downloadspeed: 106.758823ms
-  downloadcssselector: pre a:nth-child(2)
-  weight: 248.0324740831682
+  routetime: 65.754859ms
+  pingspeed: 999h0m0s
+  downloadspeed: 738.08804ms
+  weight: 719528.1478324994
   ipv6: false

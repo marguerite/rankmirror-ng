@@ -16,5 +16,10 @@ It can score mirrors by combination of 5 standards:
 
 You can give each standard a weight based on your experience.
 
-And you can just display the best mirror for by `sudo rankmirror-ng` or automatically
-set it as your download source with `sudo rankmirror-ng -set=true`. 
+## Usage
+
+* list available mirrors sorted by weight: `rankmirror-ng -list`
+* update mirrors' metadata: `sudo rankmirror-ng -update` (must use `sudo`)
+* set mirror to use: `sudo rankmirror-ng -set=Tuna` ("Tuna" is a name can be found by `rankmirror-ng -list`)
+
+

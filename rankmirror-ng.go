@@ -1,10 +1,12 @@
 package main
 
 import (
+	"crypto/rand"
 	"flag"
 	"fmt"
 	"io/ioutil"
 	"math"
+	"math/big"
 	"net"
 	"net/http"
 	"net/url"
@@ -119,22 +121,21 @@ func (mirrorlist MirrorList) Rank(config Config) {
 }
 
 type Mirror struct {
-	Name                string        `yaml:"name"`
-	IP                  string        `yaml:"ip"`
-	Raw                 string        `yaml:"raw"`
-	Distro              string        `yaml: "distro"`
-	Version             []string      `yaml: "version"`
-	Country             string        `yaml: "country"`
-	Latitude            float64       `yaml: "latitude"`
-	Longitude           float64       `yaml: "longitude"`
-	Distance            float64       `yaml: "distance"`
-	RouteLevel          float64       `yaml: "routelevel"`
-	RouteTime           time.Duration `yaml: "routetime"`
-	PingSpeed           time.Duration `yaml: "ping"`
-	DownloadSpeed       time.Duration `yaml: "download"`
-	DownloadCssSelector string        `yaml: "downloadcssselector"`
-	Weight              float64       `yaml: "weight"`
-	IPv6                bool          `yaml: "ipv6"`
+	Name          string        `yaml:"name"`
+	IP            string        `yaml:"ip"`
+	Raw           string        `yaml:"raw"`
+	Distro        string        `yaml: "distro"`
+	Version       []string      `yaml: "version"`
+	Country       string        `yaml: "country"`
+	Latitude      float64       `yaml: "latitude"`
+	Longitude     float64       `yaml: "longitude"`
+	Distance      float64       `yaml: "distance"`
+	RouteLevel    float64       `yaml: "routelevel"`
+	RouteTime     time.Duration `yaml: "routetime"`
+	PingSpeed     time.Duration `yaml: "ping"`
+	DownloadSpeed time.Duration `yaml: "download"`
+	Weight        float64       `yaml: "weight"`
+	IPv6          bool          `yaml: "ipv6"`
 }
 
 func (m *Mirror) preload(config Config, force bool) error {
@@ -312,12 +313,25 @@ func (m Mirror) TryDownload() (time.Duration, error) {
 	if err != nil {
 		return t, nil
 	}
-	file, _ := doc.Find(m.DownloadCssSelector).Attr("href")
-	if len(file) == 0 {
-		return t, fmt.Errorf("No matched CSS Selector found: %s, uri %s", m.DownloadCssSelector, repo)
+
+	links := []string{}
+	doc.Find("a").Each(
+		func(i int, s *goquery.Selection) {
+			link, _ := s.Attr("href")
+			if strings.HasSuffix(link, "xml.gz") {
+				links = append(links, link)
+			}
+		})
+
+	if len(links) == 0 {
+		return t, fmt.Errorf("No repodata found, uri %s", repo)
 	}
+
+	// randomly download a repodata xml
+	random, _ := rand.Int(rand.Reader, big.NewInt(int64(len(links))))
+
 	uri, _ := url.Parse(repo)
-	uri.Path = path.Join(uri.Path, file)
+	uri.Path = path.Join(uri.Path, links[random.Int64()])
 
 	t1 := time.Now()
 
