@@ -11,10 +11,10 @@
   longitude: 116.3889
   distance: 626.801846327229
   routelevel: 20
-  routetime: 8.110126214s
-  pingspeed: 46.728299ms
-  downloadspeed: 23.52898864748107
-  weight: 131.00024032089965
+  routetime: 5.120416037s
+  pingspeed: 53.217414ms
+  downloadspeed: 33.09356849654036
+  weight: 130.40113942599626
   ipv6: false
 - name: Ustc
   ip: 218.104.71.170
@@ -23,15 +23,140 @@
   version:
   - distribution/leap/15.1
   - distribution/leap/15.2
-  - distribution/leap/15.3
   - tumbleweed
   country: China
   latitude: 31.8642
   longitude: 117.2865
   distance: 1229.9353195978408
-  routelevel: 9
-  routetime: 79.616327ms
-  pingspeed: 55.29298ms
-  downloadspeed: 14.376248560945122
-  weight: 247.82795761611436
+  routelevel: 10
+  routetime: 1.04454411s
+  pingspeed: 57.835384ms
+  downloadspeed: 295.5954685750939
+  weight: 248.20821641872666
+  ipv6: false
+- name: Bjtu
+  ip: 202.112.154.58
+  raw: https://mirror.bjtu.edu.cn/opensuse/
+  distro: opensuse
+  version:
+  - distribution/leap/15.1
+  - distribution/leap/15.2
+  - tumbleweed
+  country: China
+  latitude: 39.9288
+  longitude: 116.3889
+  distance: 626.801846327229
+  routelevel: 20
+  routetime: 6.107695075s
+  pingspeed: 999h0m0s
+  downloadspeed: 0
+  weight: 0
+  ipv6: false
+- name: Yun-Idc
+  ip: 114.112.43.174
+  raw: http://mirrors.yun-idc.com/opensuse
+  distro: opensuse
+  version:
+  - distribution/leap/15.1
+  - distribution/leap/15.2
+  - tumbleweed
+  country: China
+  latitude: 39.9289
+  longitude: 116.3883
+  distance: 626.8453951664882
+  routelevel: 15
+  routetime: 1.113883403s
+  pingspeed: 39.930705ms
+  downloadspeed: 0
+  weight: 0
+  ipv6: false
+- name: Bit
+  ip: 114.247.56.117
+  raw: http://mirror.bit.edu.cn/opensuse
+  distro: opensuse
+  version:
+  - distribution/leap/15.1
+  - distribution/leap/15.2
+  - tumbleweed
+  country: China
+  latitude: 39.9288
+  longitude: 116.3889
+  distance: 626.801846327229
+  routelevel: 20
+  routetime: 12.053689204s
+  pingspeed: 999h0m0s
+  downloadspeed: 154.53123636942144
+  weight: 719411.772401343
+  ipv6: false
+- name: Cqu
+  ip: 202.202.1.140
+  raw: https://mirrors.cqu.edu.cn/opensuse
+  distro: opensuse
+  version:
+  - distribution/leap/15.1
+  - distribution/leap/15.2
+  - tumbleweed
+  country: China
+  latitude: 34.7725
+  longitude: 113.7266
+  distance: 1149.5757356458253
+  routelevel: 20
+  routetime: 9.073028653s
+  pingspeed: 999h0m0s
+  downloadspeed: 295.92689496398566
+  weight: 719515.7304287024
+  ipv6: false
+- name: Sjtu
+  ip: 202.38.97.230
+  raw: http://ftp.sjtu.edu.cn/opensuse
+  distro: opensuse
+  version:
+  - distribution/leap/15.1
+  - distribution/leap/15.2
+  - tumbleweed
+  country: China
+  latitude: 34.7725
+  longitude: 113.7266
+  distance: 1149.5757356458253
+  routelevel: 20
+  routetime: 12.077969292s
+  pingspeed: 133.581223ms
+  downloadspeed: 113.97912173050172
+  weight: 236.35921193949184
+  ipv6: false
+- name: Zju
+  ip: 210.32.158.231
+  raw: http://mirrors.zju.edu.cn/opensuse/
+  distro: opensuse
+  version:
+  - distribution/leap/15.1
+  - distribution/leap/15.2
+  - tumbleweed
+  country: China
+  latitude: 30.294
+  longitude: 120.1619
+  distance: 1310.290642770735
+  routelevel: 20
+  routetime: 9.077405549s
+  pingspeed: 999h0m0s
+  downloadspeed: 256.33047477553197
+  weight: 719547.8743899066
+  ipv6: false
+- name: "163"
+  ip: 59.111.0.251
+  raw: http://mirrors.163.com/openSUSE/
+  distro: opensuse
+  version:
+  - distribution/leap/15.1
+  - distribution/leap/15.2
+  - tumbleweed
+  country: China
+  latitude: 34.7725
+  longitude: 113.7266
+  distance: 1149.5757356458253
+  routelevel: 13
+  routetime: 113.461851ms
+  pingspeed: 48.176747ms
+  downloadspeed: 120.43617028107454
+  weight: 232.54913547945046
   ipv6: false

@@ -12,6 +12,7 @@ require (
 	github.com/oschwald/geoip2-golang v1.3.0
 	github.com/oschwald/maxminddb-golang v1.5.0 // indirect
 	github.com/tatsushid/go-fastping v0.0.0-20160109021039-d7bb493dee3e
+	github.com/walle/lll v1.0.1 // indirect
 	golang.org/x/crypto v0.0.0-20191206172530-e9b2fee46413 // indirect
 	golang.org/x/net v0.0.0-20191209160850-c0dbc17a3553 // indirect
 	golang.org/x/sync v0.0.0-20190911185100-cd5d95a43a6e // indirect

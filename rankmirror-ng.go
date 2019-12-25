@@ -192,8 +192,8 @@ func (m *Mirror) preload(config Config, force bool, geoDB []byte) error {
 
 	if len(m.Name) == 0 {
 		// https://mirrors.tuna.tsinghua.edu.cn/opensuse
-		re := regexp.MustCompile(`mirror(s)?\.(\w+)`)
-		m.Name = strings.Title(re.FindStringSubmatch(m.Raw)[2])
+		re := regexp.MustCompile(`\/\/\w+\.([^\.]+)`)
+		m.Name = strings.Title(re.FindStringSubmatch(m.Raw)[1])
 	}
 
 	if len(m.Distro) == 0 {
@@ -204,7 +204,6 @@ func (m *Mirror) preload(config Config, force bool, geoDB []byte) error {
 			return fmt.Errorf("distro field is empty and can not combine one from raw field: %v", *m)
 		}
 	}
-
 	if len(m.Version) == 0 || force {
 		var err error
 		m.Version, err = probeDistroVersions(m.Distro, m.Raw)
