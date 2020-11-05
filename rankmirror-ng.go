@@ -23,43 +23,33 @@ import (
 	"github.com/PuerkitoBio/goquery"
 	"github.com/aeden/traceroute"
 	"github.com/cavaliercoder/grab"
-	"github.com/marguerite/util/slice"
+	"github.com/marguerite/go-stdlib/slice"
 	"github.com/olekukonko/tablewriter"
 	geoip2 "github.com/oschwald/geoip2-golang"
 	"github.com/tatsushid/go-fastping"
 	yaml "gopkg.in/yaml.v2"
 )
 
-func readMirrorList() (MirrorList, error) {
-	mirrorlist := MirrorList{}
-
+func readMirrorList() (m MirrorList, err error) {
 	b, err := ioutil.ReadFile("mirrorlist.yaml")
 	if err != nil {
-		return mirrorlist, err
+		return m, err
 	}
 
-	err = yaml.Unmarshal(b, &mirrorlist)
-	if err != nil {
-		return mirrorlist, err
-	}
+	err = yaml.Unmarshal(b, &m)
 
-	return mirrorlist, nil
+	return m, err
 }
 
-func readConfig() (Config, error) {
-	config := Config{}
-
+func readConfig() (c Config, err error) {
 	b, err := ioutil.ReadFile("config.yaml")
 	if err != nil {
-		return config, err
+		return c, err
 	}
 
-	err = yaml.Unmarshal(b, &config)
-	if err != nil {
-		return config, err
-	}
+	err = yaml.Unmarshal(b, &c)
 
-	return config, nil
+	return c, err
 }
 
 func logname() string {
@@ -92,14 +82,14 @@ func readGeoDB() ([]byte, error) {
 
 type MirrorList []Mirror
 
-func (mirrorlist *MirrorList) preload(config Config, force bool, geoDB []byte) {
+func (m *MirrorList) init(c Config, force bool, geoDB []byte) {
 	wg := sync.WaitGroup{}
-	wg.Add(len(*mirrorlist))
+	wg.Add(len(*m))
 
-	for i := range *mirrorlist {
+	for i := range *m {
 		go func(j int) {
 			defer wg.Done()
-			err := (*mirrorlist)[j].preload(config, force, geoDB)
+			err := (*m)[j].init(c, force, geoDB)
 			if err != nil {
 				fmt.Println(err)
 			}
@@ -109,8 +99,8 @@ func (mirrorlist *MirrorList) preload(config Config, force bool, geoDB []byte) {
 	wg.Wait()
 }
 
-func (mirrorlist MirrorList) save() {
-	b, err := yaml.Marshal(mirrorlist)
+func (m MirrorList) save() {
+	b, err := yaml.Marshal(m)
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -121,34 +111,34 @@ func (mirrorlist MirrorList) save() {
 	}
 }
 
-func (mirrorlist MirrorList) Len() int {
-	return len(mirrorlist)
+func (m MirrorList) Len() int {
+	return len(m)
 }
 
-func (mirrorlist MirrorList) Less(i, j int) bool {
-	return mirrorlist[i].Weight < mirrorlist[j].Weight
+func (m MirrorList) Less(i, j int) bool {
+	return m[i].Weight < m[j].Weight
 }
 
-func (mirrorlist MirrorList) Swap(i, j int) {
-	mirrorlist[i], mirrorlist[j] = mirrorlist[j], mirrorlist[j]
+func (m MirrorList) Swap(i, j int) {
+	m[i], m[j] = m[j], m[j]
 }
 
-func (mirrorlist MirrorList) Rank(config Config) {
-	sort.Sort(mirrorlist)
+func (m MirrorList) Rank(c Config) {
+	sort.Sort(m)
 	result := [][]string{}
-	for _, m := range mirrorlist {
-		if m.Distro != config.OS {
+	for _, v := range m {
+		if v.Distro != c.OS {
 			continue
 		}
-		if ok, err := slice.Contains(m.Version, config.Variant); !ok || err != nil {
+		if ok, err := slice.Contains(v.Version, c.Variant); !ok || err != nil {
 			continue
 		}
-		w, _ := strconv.ParseFloat(fmt.Sprintf("%.2f", m.Weight), 64)
-		result = append(result, []string{m.Name, m.Country,
+		w, _ := strconv.ParseFloat(fmt.Sprintf("%.2f", v.Weight), 64)
+		result = append(result, []string{v.Name, v.Country,
 			strconv.FormatFloat(w, 'f', -1, 64),
-			fmt.Sprintf("%.2f", m.Distance) + "km",
-			m.RouteTime.String() + " (" + strconv.FormatFloat(m.RouteLevel, 'f', -1, 64) + " levels)",
-			m.PingSpeed.String(), fmt.Sprintf("%.2f", m.DownloadSpeed) + " KB/S", m.Raw})
+			fmt.Sprintf("%.2f", v.Distance) + "km",
+			v.RouteTime.String() + " (" + strconv.FormatFloat(v.RouteLevel, 'f', -1, 64) + " levels)",
+			v.PingSpeed.String(), fmt.Sprintf("%.2f", v.DownloadSpeed) + " KB/S", v.Raw})
 	}
 	table := tablewriter.NewWriter(os.Stdout)
 	table.SetHeader([]string{"Name", "Location", "Weight", "Distance", "Route", "Ping", "Download", "Mirror URL"})
@@ -175,7 +165,7 @@ type Mirror struct {
 	IPv6          bool          `yaml: "ipv6"`
 }
 
-func (m *Mirror) preload(config Config, force bool, geoDB []byte) error {
+func (m *Mirror) init(c Config, force bool, geoDB []byte) error {
 	// Raw is a must field
 	if len(m.Raw) == 0 {
 		return fmt.Errorf("raw field is required: %v", *m)
@@ -221,7 +211,7 @@ func (m *Mirror) preload(config Config, force bool, geoDB []byte) error {
 	}
 
 	if m.Distance == 0 || force {
-		m.Distance = calGeoDistance(m.Latitude, m.Longitude, config.Latitude, config.Longitude)
+		m.Distance = calGeoDistance(m.Latitude, m.Longitude, c.Latitude, c.Longitude)
 	}
 
 	if m.PingSpeed == 0 || force {
@@ -260,7 +250,7 @@ func (m *Mirror) preload(config Config, force bool, geoDB []byte) error {
 	}
 
 	if m.Weight == 0 || force {
-		m.Weight = m.Distance*config.DistanceWeight + m.RouteLevel*config.RouteLevelWeight + m.RouteTime.Seconds()*config.RouteTimeWeight + m.PingSpeed.Seconds()*config.PingWeight + config.DownloadWeight*1/m.DownloadSpeed
+		m.Weight = m.Distance*c.DistanceWeight + m.RouteLevel*c.RouteLevelWeight + m.RouteTime.Seconds()*c.RouteTimeWeight + m.PingSpeed.Seconds()*c.PingWeight + c.DownloadWeight*1/m.DownloadSpeed
 	}
 
 	return nil
@@ -355,7 +345,7 @@ func (m Mirror) TryDownload() (float64, error) {
 		return 0, nil
 	}
 
-	links := []string{}
+	var links []string
 	doc.Find("a").Each(
 		func(i int, s *goquery.Selection) {
 			link, _ := s.Attr("href")
@@ -424,7 +414,7 @@ func calGeoDistance(lat1, lng1, lat2, lng2 float64) float64 {
 }
 
 func genRepoPaths(distro string) ([]string, error) {
-	paths := []string{}
+	var paths []string
 	switch distro {
 	case "opensuse":
 		paths = []string{"distribution/leap/15.1", "distribution/leap/15.2", "distribution/leap/15.3", "tumbleweed"}
@@ -435,7 +425,7 @@ func genRepoPaths(distro string) ([]string, error) {
 }
 
 func genRepoSuffix(distro string) (string, error) {
-	suffix := ""
+	var suffix string
 	switch distro {
 	case "opensuse":
 		suffix = "repo/oss/repodata"
@@ -446,7 +436,7 @@ func genRepoSuffix(distro string) (string, error) {
 }
 
 func probeDistroVersions(distro, raw string) ([]string, error) {
-	versions := []string{}
+	var versions []string
 	paths, err := genRepoPaths(distro)
 	if err != nil {
 		return versions, err
@@ -502,7 +492,7 @@ type Config struct {
 	DownloadWeight   float64 `yaml: "downloadspeedweight"`
 }
 
-func (c *Config) preload(ip string, geoDB []byte, force bool) {
+func (c *Config) init(ip string, geoDB []byte, force bool) {
 	variant, version, _ := osInfo()
 
 	if len(c.OS) == 0 {
@@ -615,12 +605,12 @@ func main() {
 		db = db1
 	}
 
-	config.preload(ip, db, update)
+	config.init(ip, db, update)
 	config.save()
 
 	mirrorlist, _ := readMirrorList()
 
-	mirrorlist.preload(config, update, db)
+	mirrorlist.init(config, update, db)
 	mirrorlist.save()
 
 	if list {
