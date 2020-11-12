@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"os/user"
 	"path"
 	"regexp"
 	"sort"
@@ -23,6 +24,7 @@ import (
 	"github.com/PuerkitoBio/goquery"
 	"github.com/aeden/traceroute"
 	"github.com/cavaliercoder/grab"
+	"github.com/marguerite/diagnose/zypp/repository"
 	"github.com/marguerite/go-stdlib/slice"
 	"github.com/olekukonko/tablewriter"
 	geoip2 "github.com/oschwald/geoip2-golang"
@@ -123,9 +125,8 @@ func (m MirrorList) Swap(i, j int) {
 	m[i], m[j] = m[j], m[j]
 }
 
-func (m MirrorList) Rank(c Config) {
+func (m MirrorList) Rank(c Config) (result [][]string) {
 	sort.Sort(m)
-	result := [][]string{}
 	for _, v := range m {
 		if v.Distro != c.OS {
 			continue
@@ -140,11 +141,16 @@ func (m MirrorList) Rank(c Config) {
 			v.RouteTime.String() + " (" + strconv.FormatFloat(v.RouteLevel, 'f', -1, 64) + " levels)",
 			v.PingSpeed.String(), fmt.Sprintf("%.2f", v.DownloadSpeed) + " KB/S", v.Raw})
 	}
-	table := tablewriter.NewWriter(os.Stdout)
-	table.SetHeader([]string{"Name", "Location", "Weight", "Distance", "Route", "Ping", "Download", "Mirror URL"})
-	table.SetBorder(false)
-	table.AppendBulk(result)
-	table.Render()
+	return result
+}
+
+func (m MirrorList) FindByName(name string) (m1 Mirror) {
+	for _, v := range m {
+		if v.Name == name {
+			m1 = v
+		}
+	}
+	return m1
 }
 
 type Mirror struct {
@@ -583,11 +589,11 @@ func probeIP() (string, error) {
 }
 
 func main() {
-	var list bool
-	var update bool
-	var set string
+	var list, update, set bool
+	var mirror string
 
-	flag.StringVar(&set, "set", "", "the mirror to use via its name")
+	flag.StringVar(&mirror, "mirror", "", "the mirror to use via its name")
+	flag.BoolVar(&set, "set", false, "whether to set a mirror")
 	flag.BoolVar(&list, "list", false, "list the mirrors")
 	flag.BoolVar(&update, "update", false, "update the mirrors")
 	flag.Parse()
@@ -612,12 +618,33 @@ func main() {
 
 	mirrorlist.init(config, update, db)
 	mirrorlist.save()
+	result := mirrorlist.Rank(config)
 
 	if list {
-		mirrorlist.Rank(config)
+		table := tablewriter.NewWriter(os.Stdout)
+		table.SetHeader([]string{"Name", "Location", "Weight", "Distance", "Route", "Ping", "Download", "Mirror URL"})
+		table.SetBorder(false)
+		table.AppendBulk(result)
+		table.Render()
 	}
 
-	if len(set) > 0 {
-
+	if set {
+		u, _ := user.Current()
+		if u.Username != "root" || u.Uid != "0" {
+			panic("must be root to run this program")
+		}
+		selected := result[0][len(result[0])-1]
+		if len(mirror) > 0 {
+			selected = mirrorlist.FindByName(mirror).Raw
+		}
+		repositories := repository.NewRepositories()
+		for _, v := range repositories {
+			if strings.Contains(v.BaseURL, config.Variant) {
+				replace := strings.Split(v.BaseURL, config.Variant)[0]
+				v.BaseURL = strings.Replace(v.BaseURL, replace, selected, 1)
+				v.Marshal()
+				fmt.Printf("set mirror for %s\n", v.File)
+			}
+		}
 	}
 }
