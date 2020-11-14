@@ -11,9 +11,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"os/user"
 	"path"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -25,6 +25,10 @@ import (
 	"github.com/aeden/traceroute"
 	"github.com/cavaliercoder/grab"
 	"github.com/marguerite/diagnose/zypp/repository"
+	"github.com/marguerite/go-stdlib/fileutils"
+	"github.com/marguerite/go-stdlib/httputils"
+	osrelease "github.com/marguerite/go-stdlib/os-release"
+	"github.com/marguerite/go-stdlib/runtime"
 	"github.com/marguerite/go-stdlib/slice"
 	"github.com/olekukonko/tablewriter"
 	geoip2 "github.com/oschwald/geoip2-golang"
@@ -32,8 +36,18 @@ import (
 	yaml "gopkg.in/yaml.v2"
 )
 
+var (
+	mirrorlistPath = filepath.Join("/home", runtime.LogName(), ".config/rankmirror-ng/mirrorlist.yaml")
+	configPath     = filepath.Join("/home", runtime.LogName(), ".config/rankmirror-ng/config.yaml")
+	geoDbPath      = filepath.Join("/home", runtime.LogName(), ".config/rankmirror-ng/GeoLite2-City.mmdb")
+)
+
 func readMirrorList() (m MirrorList, err error) {
-	b, err := ioutil.ReadFile("mirrorlist.yaml")
+	_, err = os.Stat(mirrorlistPath)
+	if os.IsNotExist(err) {
+		fileutils.Copy("mirrorlist.yaml", mirrorlistPath)
+	}
+	b, err := ioutil.ReadFile(mirrorlistPath)
 	if err != nil {
 		return m, err
 	}
@@ -44,7 +58,11 @@ func readMirrorList() (m MirrorList, err error) {
 }
 
 func readConfig() (c Config, err error) {
-	b, err := ioutil.ReadFile("config.yaml")
+	_, err = os.Stat(configPath)
+	if os.IsNotExist(err) {
+		fileutils.Copy("config.yaml", configPath)
+	}
+	b, err := ioutil.ReadFile(configPath)
 	if err != nil {
 		return c, err
 	}
@@ -54,32 +72,17 @@ func readConfig() (c Config, err error) {
 	return c, err
 }
 
-func logname() string {
-	cmd, _ := exec.Command("logname").Output()
-	return strings.TrimSuffix(string(cmd), "\n")
-}
-
-func readGeoDB() ([]byte, error) {
-	db := "/usr/share/rankmirror-ng/GeoLite2-City.mmdb"
-	if _, err := os.Stat(db); os.IsNotExist(err) {
-		userDB := path.Join("/home", logname(), "/.config/rankmirror-ng/GeoLite2-City.mmdb")
-		if _, err1 := os.Stat(userDB); os.IsNotExist(err1) {
-			if _, err2 := os.Stat("GeoLite2-City.mmdb"); os.IsNotExist(err2) {
-				//FIXME: download and place?
-				return []byte{}, fmt.Errorf("No GeoLite2-City.mmdb found")
-			} else {
-				db = "GeoLite2-City.mmdb"
-			}
-		} else {
-			db = userDB
-		}
+func readGeoDB() (db []byte, err error) {
+	_, err = os.Stat(geoDbPath)
+	if os.IsNotExist(err) {
+		return db, fmt.Errorf("Sorry, you have no GeoLite2-City.mmdb available in %s, you should download one from maxmind, see: https://blog.maxmind.com/2019/12/18/significant-changes-to-accessing-and-using-geolite2-databases/", geoDbPath)
 	}
 
-	data, err := ioutil.ReadFile(db)
+	db, err = ioutil.ReadFile(geoDbPath)
 	if err != nil {
-		return []byte{}, err
+		return db, err
 	}
-	return data, nil
+	return db, nil
 }
 
 type MirrorList []Mirror
@@ -107,7 +110,7 @@ func (m MirrorList) save() {
 		fmt.Println(err)
 		return
 	}
-	err = ioutil.WriteFile("mirrorlist.yaml", b, 0644)
+	err = ioutil.WriteFile(mirrorlistPath, b, 0644)
 	if err != nil {
 		fmt.Println(err)
 	}
@@ -469,17 +472,17 @@ func probeDistroVersions(distro, raw string) ([]string, error) {
 	return versions, nil
 }
 
-func geoLocateIP(raw string, geoDB []byte) (string, float64, float64, error) {
+func geoLocateIP(addr string, geoDB []byte) (country string, latitude float64, longitude float64, err error) {
 	db, err := geoip2.FromBytes(geoDB)
 	if err != nil {
-		return "", 0, 0, err
+		return country, latitude, longitude, err
 	}
 	defer db.Close()
 
-	ip := net.ParseIP(raw)
+	ip := net.ParseIP(addr)
 	record, err := db.City(ip)
 	if err != nil {
-		return "", 0, 0, err
+		return country, latitude, longitude, err
 	}
 	return record.Country.Names["en"], record.Location.Latitude, record.Location.Longitude, nil
 }
@@ -499,7 +502,7 @@ type Config struct {
 }
 
 func (c *Config) init(ip string, geoDB []byte, force bool) {
-	variant, version, _ := osInfo()
+	variant, version := osInfo()
 
 	if len(c.OS) == 0 {
 		c.OS = variant
@@ -550,42 +553,19 @@ func (c Config) save() {
 		fmt.Println(err)
 		return
 	}
-	err = ioutil.WriteFile("config.yaml", b, 0644)
+	err = ioutil.WriteFile(configPath, b, 0644)
 	if err != nil {
 		fmt.Println(err)
 	}
 }
 
-func osInfo() (string, string, error) {
-	f, err := ioutil.ReadFile("/etc/os-release")
-	if err != nil {
-		return "", "", err
+func osInfo() (string, string) {
+	version := osrelease.Version()
+	name := strings.ToLower(osrelease.Name())
+	if strings.Contains(name, "opensuse") {
+		name = strings.TrimPrefix(name, "opensuse-")
 	}
-
-	id_r := regexp.MustCompile(`(?m)^ID=("opensuse-)?([^"]+)(")?$`)
-	ver_r := regexp.MustCompile(`(?m)^VERSION_ID=(")?([^"]+)(")?$`)
-
-	id := id_r.FindStringSubmatch(string(f))[2]
-	version := "0.0"
-
-	if ver_r.MatchString(string(f)) {
-		version = ver_r.FindStringSubmatch(string(f))[2]
-	}
-
-	return id, version, nil
-}
-
-func probeIP() (string, error) {
-	resp, err := http.Get("https://myexternalip.com/raw")
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	b, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
-	return string(b), nil
+	return name, strconv.Itoa(version)
 }
 
 func main() {
@@ -599,7 +579,7 @@ func main() {
 	flag.Parse()
 
 	config, _ := readConfig()
-	ip, _ := probeIP()
+	ip, _ := httputils.LocalIPAddress()
 	var db []byte
 
 	if config.IP != ip || update {
