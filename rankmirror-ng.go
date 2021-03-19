@@ -36,46 +36,62 @@ import (
 	yaml "gopkg.in/yaml.v2"
 )
 
-var (
-	mirrorlistPath = filepath.Join("/home", runtime.LogName(), ".config/rankmirror-ng/mirrorlist.yaml")
-	configPath     = filepath.Join("/home", runtime.LogName(), ".config/rankmirror-ng/config.yaml")
-	geoDbPath      = filepath.Join("/home", runtime.LogName(), ".config/rankmirror-ng/GeoLite2-City.mmdb")
+const (
+	geoDbPath = "/var/lib/GeoIP/GeoLite2-City.mmdb"
 )
 
-func readMirrorList() (m MirrorList, err error) {
-	_, err = os.Stat(mirrorlistPath)
-	if os.IsNotExist(err) {
-		fileutils.Copy("mirrorlist.yaml", mirrorlistPath)
-	}
-	b, err := ioutil.ReadFile(mirrorlistPath)
-	if err != nil {
-		return m, err
-	}
-
-	err = yaml.Unmarshal(b, &m)
-
-	return m, err
+func configPath() string {
+	return filepath.Join("/home", runtime.LogName(), ".config", "rankmirror-ng")
 }
 
-func readConfig() (c Config, err error) {
-	_, err = os.Stat(configPath)
+func getMirrorlistPath() string {
+	return filepath.Join(configPath(), "mirrorlist.yaml")
+}
+
+func getConfigPath() string {
+	return filepath.Join(configPath(), "config.yaml")
+}
+
+func readMirrorList() (MirrorList, error) {
+	p := getMirrorlistPath()
+	_, err := os.Stat(p)
 	if os.IsNotExist(err) {
-		fileutils.Copy("config.yaml", configPath)
+		fileutils.Copy("mirrorlist.yaml", p)
 	}
-	b, err := ioutil.ReadFile(configPath)
+
+	var m MirrorList
+	b, err1 := ioutil.ReadFile(p)
+	if err1 != nil {
+		return m, err1
+	}
+
+	err2 := yaml.Unmarshal(b, &m)
+
+	return m, err2
+}
+
+func readConfig() (Config, error) {
+	p := getConfigPath()
+	_, err := os.Stat(p)
+	if os.IsNotExist(err) {
+		fileutils.Copy("config.yaml", p)
+	}
+
+	var config Config
+	b, err := ioutil.ReadFile(p)
 	if err != nil {
-		return c, err
+		return config, err
 	}
 
-	err = yaml.Unmarshal(b, &c)
+	err = yaml.Unmarshal(b, &config)
 
-	return c, err
+	return config, err
 }
 
 func readGeoDB() (db []byte, err error) {
 	_, err = os.Stat(geoDbPath)
 	if os.IsNotExist(err) {
-		return db, fmt.Errorf("Sorry, you have no GeoLite2-City.mmdb available in %s, you should download one from maxmind, see: https://blog.maxmind.com/2019/12/18/significant-changes-to-accessing-and-using-geolite2-databases/", geoDbPath)
+		return db, fmt.Errorf("Sorry, you have no GeoLite2-City.mmdb available in %s, you should zypper install geoipupdate and follow the instructions in /etc/GeoIP", geoDbPath)
 	}
 
 	db, err = ioutil.ReadFile(geoDbPath)
@@ -110,7 +126,7 @@ func (m MirrorList) save() {
 		fmt.Println(err)
 		return
 	}
-	err = ioutil.WriteFile(mirrorlistPath, b, 0644)
+	err = ioutil.WriteFile(getMirrorlistPath(), b, 0644)
 	if err != nil {
 		fmt.Println(err)
 	}
@@ -125,7 +141,7 @@ func (m MirrorList) Less(i, j int) bool {
 }
 
 func (m MirrorList) Swap(i, j int) {
-	m[i], m[j] = m[j], m[j]
+	m[i], m[j] = m[j], m[i]
 }
 
 func (m MirrorList) Rank(c Config) (result [][]string) {
@@ -376,8 +392,15 @@ func (m Mirror) TryDownload() (float64, error) {
 	file := path.Join("/tmp", strconv.FormatInt(time.Now().UnixNano()/int64(time.Nanosecond), 10)+"-"+path.Base(uri.String()))
 	fmt.Printf("Downloading %s to %s\n", uri.String(), file)
 
-	client := grab.NewClient()
-	client.HTTPClient.Timeout = 30 * time.Second
+	client := &grab.Client{
+		UserAgent: "grab",
+		HTTPClient: &http.Client{
+			Transport: &http.Transport{
+				Proxy: http.ProxyFromEnvironment,
+			},
+			Timeout: 30 * time.Second,
+		},
+	}
 
 	req, err := grab.NewRequest(file, uri.String())
 	if err != nil {
@@ -553,7 +576,7 @@ func (c Config) save() {
 		fmt.Println(err)
 		return
 	}
-	err = ioutil.WriteFile(configPath, b, 0644)
+	err = ioutil.WriteFile(getConfigPath(), b, 0644)
 	if err != nil {
 		fmt.Println(err)
 	}
@@ -573,9 +596,9 @@ func main() {
 	var mirror string
 
 	flag.StringVar(&mirror, "mirror", "", "the mirror to use via its name")
-	flag.BoolVar(&set, "set", false, "whether to set a mirror")
-	flag.BoolVar(&list, "list", false, "list the mirrors")
-	flag.BoolVar(&update, "update", false, "update the mirrors")
+	flag.BoolVar(&set, "set", false, "set a mirror, by default it will use the fast mirror, or you can specify one with -mirror=Name. root permission required")
+	flag.BoolVar(&list, "list", true, "list the available mirrors")
+	flag.BoolVar(&update, "update", false, "update the mirrors' information. root permission required")
 	flag.Parse()
 
 	config, _ := readConfig()
@@ -598,9 +621,11 @@ func main() {
 
 	mirrorlist.init(config, update, db)
 	mirrorlist.save()
-	result := mirrorlist.Rank(config)
+
+	var result [][]string
 
 	if list {
+		result = mirrorlist.Rank(config)
 		table := tablewriter.NewWriter(os.Stdout)
 		table.SetHeader([]string{"Name", "Location", "Weight", "Distance", "Route", "Ping", "Download", "Mirror URL"})
 		table.SetBorder(false)
@@ -613,10 +638,20 @@ func main() {
 		if u.Username != "root" || u.Uid != "0" {
 			panic("must be root to run this program")
 		}
-		selected := result[0][len(result[0])-1]
+
+		var selected string
+
 		if len(mirror) > 0 {
 			selected = mirrorlist.FindByName(mirror).Raw
+		} else {
+			result = mirrorlist.Rank(config)
+			selected = result[0][len(result[0])-1]
 		}
+
+		if selected[len(selected)-1] != '/' {
+			selected += "/"
+		}
+
 		repositories := repository.NewRepositories()
 		for _, v := range repositories {
 			if strings.Contains(v.BaseURL, config.Variant) {

@@ -1,9 +1,9 @@
 os: opensuse
 variant: tumbleweed
-version: "20190815"
-ip:
-latitude:
-longitude:
+version: "20201130"
+ip: ""
+latitude: 0
+longitude: 0
 distanceweight: 0.2
 routelevelweight: 0.2
 routetimeweight: 0.2
