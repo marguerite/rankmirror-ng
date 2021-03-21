@@ -1,0 +1,7 @@
+[Unit]
+Description=Automatically change the most fast mirror
+
+[Service]
+Type=oneshot
+
+ExecStart=/usr/bin/rankmirror-ng-v2-1.0.0.x86_64.AppImage

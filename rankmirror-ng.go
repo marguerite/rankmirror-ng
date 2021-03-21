@@ -123,6 +123,7 @@ func speedTest(mirrors Mirrors) speeds {
 			_, err := exec.Command("/usr/bin/zypper", "--root="+dir, "--no-gpg-checks", "ar", "-c", u, strings.Replace(distro.Name(), " ", "_", -1)).Output()
 			if err != nil {
 				mutex.Lock()
+				fmt.Printf("Testing %s\n", mirror)
 				results = append(results, speed{mirror, 0})
 				mutex.Unlock()
 				return
@@ -143,12 +144,14 @@ func speedTest(mirrors Mirrors) speeds {
 			case res := <-c1:
 				if res != "nil" {
 					mutex.Lock()
+					fmt.Printf("Testing %s\n", mirror)
 					results = append(results, speed{mirror, 0})
 					mutex.Unlock()
 					return
 				}
 			case <-time.After(5 * time.Minute):
 				mutex.Lock()
+				fmt.Printf("Testing %s\n", mirror)
 				results = append(results, speed{mirror, 0})
 				mutex.Unlock()
 				return
@@ -171,12 +174,14 @@ func speedTest(mirrors Mirrors) speeds {
 			case res := <-c2:
 				if res != "nil" {
 					mutex.Lock()
+					fmt.Printf("Testing %s\n", mirror)
 					results = append(results, speed{mirror, 0})
 					mutex.Unlock()
 					return
 				}
 			case <-time.After(5 * time.Minute):
 				mutex.Lock()
+				fmt.Printf("Testing %s\n", mirror)
 				results = append(results, speed{mirror, 0})
 				mutex.Unlock()
 				return
@@ -184,6 +189,7 @@ func speedTest(mirrors Mirrors) speeds {
 
 			d := time.Since(t)
 			mutex.Lock()
+			fmt.Printf("Testing %s\n", mirror)
 			results = append(results, speed{mirror, d.Seconds()})
 			mutex.Unlock()
 		}(v)
@@ -212,6 +218,7 @@ func replaceMirror(str, str1 string) string {
 }
 
 func main() {
+	fmt.Println("Reading mirror list...")
 	p, err := mirrorsPath()
 	if err != nil {
 		panic(err)
@@ -228,6 +235,7 @@ func main() {
 		os.Exit(1)
 	}
 
+	fmt.Println("Intializing mirror testing...")
 	s := speedTest(mirrors)
 
 	sort.Sort(s)
@@ -269,6 +277,7 @@ func main() {
 			}
 		}
 
+		fmt.Println("Refreshing repositories...")
 		_, err := exec.Command("/usr/bin/zypper", "--no-gpg-checks", "refresh").Output()
 		if err != nil {
 			panic("failed to refresh repositories")

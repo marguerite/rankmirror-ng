@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily update zypper repositories
+
+[Timer]
+OnUnitInactiveSec=1d
+OnStartupSec=10m
+AccuracySec=10m
+
+[Install]
+WantedBy=timers.target
