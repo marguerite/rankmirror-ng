@@ -1,0 +1,37 @@
+name: ci
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: ubuntu-18.04
+    steps:
+      - uses: actions/checkout@v1.2.0
+      - name: Update packages
+        run: |
+          sudo apt-get update
+      - name: Install dependencies
+        run: |
+          sudo apt-get install golang-1.13 wget fuse libfuse2 kmod
+          ls -l /lib/modules
+          /sbin/modprobe fuse
+
+      - name: Build AppImage
+        run: |
+          export GO111MODULE=on
+          go mod download
+          go mod vendor
+          chmod +x build.sh
+          bash build.sh
+
+      - name: Upload binaries to release
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: rankmirror-ng-x86_64.AppImage
+          asset_name: rankmirror-ng-v2-$tag.x86_64.AppImage
+          tag: ${{ github.ref }}
+          overwrite: true

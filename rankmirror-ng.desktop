@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=rankmirror-ng
+Icon=yast-services-manager
+Type=Application
+Exec=rankmirror-ng
+Categories=System;
